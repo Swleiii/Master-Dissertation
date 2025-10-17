@@ -1,0 +1,2575 @@
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+      name:  mainlog_txt
+       log:  /Users/leisz1/Desktop/Dissertation/Regression/Do_file/Logs/main_log.txt
+  log type:  text
+ opened on:  10 Sep 2025, 08:41:35
+
+. 
+. *-----------------------------*
+. * 3. Run Data Preparation Script
+. *-----------------------------*
+. di as txt ">> Running preparing_data.do..."
+>> Running preparing_data.do...
+
+. do "preparing_data.do"
+
+. /****************************************************************
+>  prep_final_dataset.do  
+> *****************************************************************/
+. 
+. version 18
+
+. clear all
+
+. set more off
+
+. 
+. *— Workspace —*
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. 
+. *------------------------------------------------------
+. * 0) LOAD
+. *------------------------------------------------------
+. use "NA_data_raw.dta", clear
+((null))
+
+. tempvar _nobs
+
+. count
+  286,813
+
+. di as result "Obs loaded: " r(N)
+Obs loaded: 286813
+
+. 
+. *------------------------------------------------------
+. * CAD to USD Conversion for Canadian firms
+. *------------------------------------------------------
+. 
+. * Step 1: Load exchange rates
+. import delimited using "cad_usd_rates.csv", clear
+(encoding automatically selected: ISO-8859-2)
+(3 vars, 25 obs)
+
+. rename cad_per_usd cad_usd_rate
+
+. tempfile fx
+
+. save `fx', replace
+(file /var/folders/jv/dhjjd6m57yvchm_dq7j_l5180000gq/T//S_51080.000001 not found)
+file /var/folders/jv/dhjjd6m57yvchm_dq7j_l5180000gq/T//S_51080.000001 saved as .dta format
+
+. 
+. * Step 2: Back to main data
+. use "NA_data_raw.dta", clear
+((null))
+
+. 
+. * Harmonize GVKEY and FYEAR if needed
+. capture confirm string variable gvkey
+
+. if !_rc {
+.     encode gvkey, gen(gvkey_num)
+.     drop gvkey
+.     rename gvkey_num gvkey
+. }
+
+. destring fyear, replace force
+fyear already numeric; no replace
+
+. 
+. * Step 3: Merge FX rates
+. merge m:1 fyear using `fx', keep(master match) nogen
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                           192
+        from master                       192  
+        from using                          0  
+
+    Matched                           286,621  
+    -----------------------------------------
+
+. 
+. * Step 4: Convert CAD values to USD (selected variables only)
+. capture confirm variable curcd
+
+. gen cadflag = (curcd == "CAD") if !missing(curcd)
+
+. label var cadflag "1 = CAD-denominated obs"
+
+. 
+. foreach var in at sale xrd intan oancf oiadp ppegt dltt dlc prcc_f {
+  2.     capture confirm variable `var'
+  3.     if !_rc {
+  4.         gen `var'_usd = `var'
+  5.         replace `var'_usd = `var' * cad_usd_rate if cadflag == 1 & !missing(cad_usd_rate)
+  6.         drop `var'
+  7.         rename `var'_usd `var'
+  8.         label var `var' "`var' (converted to USD if in CAD)"
+  9.     }
+ 10. }
+(63,090 missing values generated)
+(34,838 real changes made)
+(64,286 missing values generated)
+(23,566 real changes made)
+(185,247 missing values generated)
+(5,307 real changes made)
+(68,165 missing values generated)
+(13,915 real changes made)
+(68,820 missing values generated)
+(34,353 real changes made)
+(64,300 missing values generated)
+(34,466 real changes made)
+(92,217 missing values generated)
+(28,956 real changes made)
+(63,611 missing values generated)
+(19,255 real changes made)
+(63,266 missing values generated)
+(20,670 real changes made)
+(27,205 missing values generated)
+(43,165 real changes made)
+
+. 
+. * harmonize keys
+. cap confirm string variable gvkey
+
+. if !_rc {
+.     encode gvkey, gen(gvkey_num)
+.     drop gvkey
+.     rename gvkey_num gvkey
+. }
+
+. destring fyear, replace force
+fyear already numeric; no replace
+
+. 
+. * panel index (yearly)
+. gsort gvkey fyear
+
+. by gvkey fyear: keep if _n == 1
+(11 observations deleted)
+
+. xtset gvkey fyear
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2000 to 2025, but with gaps
+         Delta: 1 unit
+
+. 
+. * Basic filters 
+. drop if missing(gvkey, fyear)
+(0 observations deleted)
+
+. drop if missing(at) | at<=0
+(64,083 observations deleted)
+
+. 
+. * Industry buckets if SIC exists
+. cap confirm variable sic
+
+. if !_rc {
+.     cap destring sic, replace force
+.     gen sic2 = floor(sic/100)
+.     gen sic3 = floor(sic/10)
+.     label var sic2 "SIC 2-digit"
+.     label var sic3 "SIC 3-digit"
+. }
+
+. 
+. *------------------------------------------------------
+. * 1) CORE ACCOUNTING CONSTRUCTS (controls)
+. *------------------------------------------------------
+. * Size
+. gen lnat = ln(at)
+
+. label var lnat "log(AT)"
+
+. 
+. * Profitability (OIADP/AT) 
+. cap confirm variable oiadp
+
+. if !_rc {
+.     gen prof = oiadp/at
+(1,200 missing values generated)
+.     label var prof "Profitability = OIADP/AT"
+. }
+
+. 
+. * Tangibility (PPEGT/AT)
+. cap confirm variable ppegt
+
+. if !_rc {
+.     gen collateral_r = ppegt/at
+(29,121 missing values generated)
+.     label var collateral_r "Tangibility = PPEGT/AT"
+. }
+
+. 
+. * Market value and q 
+. gen mve = prcc_f * csho
+(23,430 missing values generated)
+
+. gen q = (mve + dltt + dlc) / at
+(24,015 missing values generated)
+
+. label var q "Tobin's q = (PRCC_F × CSHO + DLTT + DLC) / AT"
+
+. 
+. 
+. * Leverage (book) if debt pieces exist
+. cap gen lev_book   = (dltt+dlc)/at
+
+. label var lev_book "Book leverage = (DLTT+DLC)/AT"
+
+. 
+. * Sales share & industry totals if SALE exists
+. cap confirm variable sale
+
+. if !_rc & !missing(sic) {
+.     bysort sic fyear: egen industry_sales = total(sale)
+.     gen sales_share = sale/industry_sales
+(1,207 missing values generated)
+.     label var sales_share "Firm sales share (SIC-year)"
+. }
+
+. 
+. *------------------------------------------------------
+. * 2) CASH-FLOW VOLATILITY (CFV)
+. *   CFV = rolling sd of (OANCF/AT) over up to 5 yrs (>=3 required)
+. *------------------------------------------------------
+. cap confirm variable oancf
+
+. if !_rc {
+.         gen ocf_at = oancf / at
+(5,691 missing values generated)
+.         winsor2 ocf_at, cuts(1 99) replace
+.     label var ocf_at "Operating CF / Assets (OANCF/AT)"
+. 
+.     rangestat (sd) cfv=ocf_at (count) n_ocf=ocf_at, ///
+>         by(gvkey) interval(fyear -4 0)
+.     replace cfv = . if n_ocf<3
+(21,474 real changes made, 21,474 to missing)
+.     drop n_ocf
+.     label var cfv "CF volatility (sd of OANCF/AT over 3–5y)"
+. }
+
+. 
+. *------------------------------------------------------
+. * 3) INTANGIBLE PORTFOLIO INPUTS
+. *   Z_R&D = XRD/SALE,  Z_IA = INTAN/AT,  Z_ID = 1-(XSGA-XRD)/INTAN
+. *------------------------------------------------------
+. 
+. cap confirm variable xrd
+
+. if !_rc & !_rc {  
+.     gen zrd_raw = xrd/revt
+(129,575 missing values generated)
+.     label var zrd_raw "R&D intensity = XRD/SALE"
+. }
+
+. 
+. cap confirm variable intan
+
+. if !_rc {
+.     gen zia_raw = intan/at
+(5,075 missing values generated)
+.     label var zia_raw "Intangibles ratio = INTAN/AT"
+. }
+
+. 
+. cap confirm variable xsga
+
+. if !_rc {
+.     gen zid_raw = 1-((xsga-xrd)/intan)
+(157,591 missing values generated)
+.     label var zid_raw "Identifiable intangibles ratio = 1-(XSGA-XRD)/INTAN"
+. }
+
+. 
+. 
+. *------------------------------------------------------
+. * 4) PCA-BASED INTANGIBLE PORTFOLIO (IP)
+. *   Standardize by year; PCA on (Z_RD, Z_IA, A_ID); use PC1 score
+. *------------------------------------------------------
+. tempvar z1 z2 z3
+
+. cap noi {
+.     bys fyear: egen zrd_std   = std(zrd_raw)
+(129,575 missing values generated)
+.     bys fyear: egen zia_std   = std(zia_raw)
+(5,075 missing values generated)
+.         bys fyear: egen zid_std   = std(zid_raw)
+(157,591 missing values generated)
+.         
+.     pca zrd_std zia_std zid_std if !missing(zrd_std, zia_std, zid_raw)
+
+Principal components/correlation                 Number of obs    =     63,119
+                                                 Number of comp.  =          3
+                                                 Trace            =          3
+    Rotation: (unrotated = principal)            Rho              =     1.0000
+
+    --------------------------------------------------------------------------
+       Component |   Eigenvalue   Difference         Proportion   Cumulative
+    -------------+------------------------------------------------------------
+           Comp1 |      1.11559      .114407             0.3719       0.3719
+           Comp2 |      1.00118      .117941             0.3337       0.7056
+           Comp3 |      .883237            .             0.2944       1.0000
+    --------------------------------------------------------------------------
+
+Principal components (eigenvectors) 
+
+    ----------------------------------------------------------
+        Variable |    Comp1     Comp2     Comp3 | Unexplained 
+    -------------+------------------------------+-------------
+         zrd_std |   0.0001    0.9950    0.0999 |           0 
+         zia_std |   0.7071    0.0706   -0.7036 |           0 
+         zid_std |   0.7071   -0.0708    0.7036 |           0 
+    ----------------------------------------------------------
+.     predict ip_pc1 if e(sample), score
+(2 components skipped)
+
+Scoring coefficients 
+    sum of squares(column-loading) = 1
+
+    --------------------------------------------
+        Variable |    Comp1     Comp2     Comp3 
+    -------------+------------------------------
+         zrd_std |   0.0001    0.9950    0.0999 
+         zia_std |   0.7071    0.0706   -0.7036 
+         zid_std |   0.7071   -0.0708    0.7036 
+    --------------------------------------------
+.     label var ip_pc1 "IP = PCA first score of (Z_RD,Z_IA,Z_ID)"
+. 
+.     * Normalize within (sic3,year) for comparability
+.     cap confirm variable sic3
+.     if !_rc {
+.         bys sic3 fyear: egen ip = std(ip_pc1)
+(160,678 missing values generated)
+.     }
+.     else {
+.         bys fyear: egen ip = std(ip_pc1)
+.     }
+.     label var ip "Intangible Portfolio (within-group z of PC1)"
+. }
+
+. 
+. *------------------------------------------------------
+. * 5) NATURAL HEDGE (NH): distance to industry‑median IP, scaled by range
+. *   NH in [0,1]; higher = closer to the technological core.
+. *   Use SIC3×year when available, else SIC×year.
+. *------------------------------------------------------
+. tempfile medtmp
+
+. preserve
+
+. keep gvkey fyear ip sic3 sic sale
+
+. keep if !missing(ip)
+(160,678 observations deleted)
+
+. 
+. gen grp = .
+(62,041 missing values generated)
+
+. cap confirm variable sic3
+
+. if !_rc qui replace grp = sic3
+
+. else if !missing(sic) qui replace grp = floor(sic/10)
+
+. else qui replace grp = 0
+
+. 
+. * sales‑weights for weighted median (exclude self later via merge)
+. bys grp fyear: egen W = total(sale) if !missing(sale)
+
+. gen w = sale/W if !missing(sale) & W>0
+
+. replace w = . if missing(sale)
+(0 real changes made)
+
+. 
+. * sort and cum‑weights
+. bys grp fyear (ip gvkey): gen cw = sum(cond(missing(w), 0, w))
+
+. bys grp fyear: gen wm_ip = ip if cw>=0.5
+(31,920 missing values generated)
+
+. bys grp fyear: egen wmed_ip = min(wm_ip)
+
+. 
+. bys grp fyear: egen ip_max = max(ip)
+
+. bys grp fyear: egen ip_min = min(ip)
+
+. gen ip_range = ip_max - ip_min
+
+. 
+. gen nh = .
+(62,041 missing values generated)
+
+. replace nh = 1 - abs(ip - wmed_ip)/ip_range if ip_range>0
+(62,041 real changes made)
+
+. replace nh = 0.5 if ip_range==0
+(0 real changes made)
+
+. keep gvkey fyear nh
+
+. save `medtmp', replace
+(file /var/folders/jv/dhjjd6m57yvchm_dq7j_l5180000gq/T//S_51080.000002 not found)
+file /var/folders/jv/dhjjd6m57yvchm_dq7j_l5180000gq/T//S_51080.000002 saved as .dta format
+
+. restore
+
+. 
+. merge 1:1 gvkey fyear using `medtmp', nogen
+(label gvkey_num already defined)
+
+    Result                      Number of obs
+    -----------------------------------------
+    Not matched                       160,678
+        from master                   160,678  
+        from using                          0  
+
+    Matched                            62,041  
+    -----------------------------------------
+
+. label var nh "Natural Hedge (proximity to industry‑median IP)"
+
+. 
+. *------------------------------------------------------
+. * 6) INDUSTRY CONCENTRATION (HHI) — SIC×year from sales
+. *------------------------------------------------------
+. cap confirm variable sale
+
+. if !_rc & !missing(sic) {
+.     bys sic fyear: egen totS = total(sale)
+.     gen sshare = sale/totS
+(1,207 missing values generated)
+.         gen sshare100 = 100 * sshare
+(1,207 missing values generated)
+.         bys sic fyear: egen hhi_100 = total(sshare100^2)
+. 
+.     bys sic fyear: egen hhi = total(sshare^2)
+.     drop totS sshare
+.     label var hhi "HHI (SIC-year, sales‑based)"
+. }
+
+. 
+. *--------------------------------------------------*
+. * Define Industry Concentration Groups
+. *--------------------------------------------------*
+. gen industry_type = . 
+(222,719 missing values generated)
+
+. replace industry_type = 0 if hhi_100 < 1000 & !missing(hhi_100)
+(73,863 real changes made)
+
+. replace industry_type = 1 if hhi_100 > 1800 & !missing(hhi_100)
+(86,220 real changes made)
+
+. 
+. label define industry_type 0 "Competitive" 1 "Concentrated"
+
+. label values industry_type industry_type
+
+. 
+. *------------------------------------------------------
+. * 7) Data Preprocessing
+. *------------------------------------------------------
+. * ---------- MISSING-DATA HANDLING ----------
+. tsset gvkey fyear
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2000 to 2025, but with gaps
+         Delta: 1 unit
+
+. 
+. local base at dlc dltt intan ppegt oiadp revt sale xrd xsga oancf csho prcc_f
+
+. 
+. * Keep flags so you can do sensitivity checks later
+. foreach v of local base {
+  2.     gen wasmiss_`v' = missing(`v')
+  3. }
+
+. 
+. * 2.1 Short-gap within-firm linear interpolation (only inside existing bounds)
+. foreach v of local base {
+  2.     by gvkey: ipolate `v' fyear, gen(__lin_`v')   // no epolate → no edge extrapolation
+  3.     replace `v' = __lin_`v' if missing(`v') & !missing(__lin_`v')
+  4.     drop __lin_`v'
+  5. }
+(0 real changes made)
+(107 missing values generated)
+(70 real changes made)
+(199 missing values generated)
+(322 real changes made)
+(3611 missing values generated)
+(1,464 real changes made)
+(27528 missing values generated)
+(1,593 real changes made)
+(1046 missing values generated)
+(154 real changes made)
+(1042 missing values generated)
+(145 real changes made)
+(1042 missing values generated)
+(145 real changes made)
+(120420 missing values generated)
+(1,015 real changes made)
+(36969 missing values generated)
+(2,645 real changes made)
+(5340 missing values generated)
+(351 real changes made)
+(4630 missing values generated)
+(171 real changes made)
+(22570 missing values generated)
+(423 real changes made)
+
+. 
+. * 2.2 Industry×year fallback (weighted median is robust)
+. capture confirm variable sic3
+
+. gen __grp = cond(_rc, floor(sic/10), sic3)   // use sic3 else sic2-ish fallback
+
+. foreach v of local base {
+  2.     bys __grp fyear: egen __wmed_`v' = median(`v')
+  3.     replace `v' = __wmed_`v' if missing(`v')
+  4.     drop __wmed_`v'
+  5. }
+(0 real changes made)
+(1 missing value generated)
+(106 real changes made)
+(2 missing values generated)
+(197 real changes made)
+(3 missing values generated)
+(3,608 real changes made)
+(1,488 missing values generated)
+(26,040 real changes made)
+(1,046 real changes made)
+(1,042 real changes made)
+(1,042 real changes made)
+(24,746 missing values generated)
+(95,674 real changes made)
+(516 missing values generated)
+(36,453 real changes made)
+(2 missing values generated)
+(5,338 real changes made)
+(3 missing values generated)
+(4,627 real changes made)
+(21 missing values generated)
+(22,549 real changes made)
+
+. drop __grp
+
+. 
+. * 2.3 Still-missing last resort: firm mean (your current idea) — but only then
+. foreach v of local base {
+  2.     bys gvkey: egen __firmmean_`v' = mean(`v')
+  3.     replace `v' = __firmmean_`v' if missing(`v')
+  4.     drop __firmmean_`v'
+  5. }
+(0 real changes made)
+(1 real change made)
+(2 real changes made)
+(3 real changes made)
+(341 missing values generated)
+(1,147 real changes made)
+(0 real changes made)
+(0 real changes made)
+(0 real changes made)
+(11,581 missing values generated)
+(13,165 real changes made)
+(106 missing values generated)
+(410 real changes made)
+(2 real changes made)
+(3 real changes made)
+(4 missing values generated)
+(17 real changes made)
+
+. 
+. * 2.4 Now winsorize (AFTER imputing so imputed values are treated the same)
+. foreach v of local base {
+  2.     cap which winsor2
+  3.     if _rc==0 {
+  4.         winsor2 `v', cuts(1 99) replace
+  5.     }
+  6. }
+
+. 
+. * Optional: drop obs still missing "must-have" inputs
+. drop if missing(at, sale, xrd, intan, oancf, oiadp, ppegt, dltt, dlc, prcc_f, ip, lev_book, cfv)
+(170,280 observations deleted)
+
+. 
+. * Standardize all relevant variables by year
+. foreach var in lev_book cfv prof ip nh lnat q collateral_r hhi {
+  2.     gen z_`var' = .
+  3.     by fyear (gvkey), sort: egen mean_`var' = mean(`var')
+  4.     by fyear (gvkey), sort: egen sd_`var' = sd(`var')
+  5.     replace z_`var' = (`var' - mean_`var') / sd_`var' if sd_`var' > 0
+  6.     drop mean_`var' sd_`var'
+  7. }
+(52,439 missing values generated)
+(52,439 real changes made)
+(52,439 missing values generated)
+(52,439 real changes made)
+(52,439 missing values generated)
+(52,439 real changes made)
+(52,439 missing values generated)
+(52,439 real changes made)
+(52,439 missing values generated)
+(52,439 real changes made)
+(52,439 missing values generated)
+(52,439 real changes made)
+(52,439 missing values generated)
+(51,000 real changes made)
+(52,439 missing values generated)
+(50,646 real changes made)
+(52,439 missing values generated)
+(52,439 real changes made)
+
+. 
+. * Build simple lags as predictors (they help a ton in panels)
+. tsset gvkey fyear
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 unit
+
+. foreach v in at dlc dltt intan ppegt oiadp revt sale xrd xsga oancf csho prcc_f {
+  2.     by gvkey: gen L1_`v' = L.`v'
+  3. }
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+(7,367 missing values generated)
+
+. 
+. *------------------------------------------------------
+. * 8) LAGS & FIRST‑DIFFERENCES for system estimation
+. *------------------------------------------------------
+. tsset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 year
+
+. local gmmvars lev_book cfv ip nh prof lnat q collateral_r hhi
+
+. 
+. foreach var of local gmmvars {
+  2.     gen D_`var' = D.`var'
+  3.     gen L1_D_`var' = L.D.`var'
+  4. }
+(7,367 missing values generated)
+(13,612 missing values generated)
+(7,367 missing values generated)
+(13,612 missing values generated)
+(7,367 missing values generated)
+(13,612 missing values generated)
+(7,367 missing values generated)
+(13,612 missing values generated)
+(7,367 missing values generated)
+(13,612 missing values generated)
+(7,367 missing values generated)
+(13,612 missing values generated)
+(8,607 missing values generated)
+(14,632 missing values generated)
+(8,942 missing values generated)
+(14,884 missing values generated)
+(7,367 missing values generated)
+(13,612 missing values generated)
+
+. 
+. *------------------------------------------------------
+. * 9) TIDY OUTPUT
+. *------------------------------------------------------
+. * Drop short panels and missing values
+. bysort gvkey: gen obs_firm = _N
+
+. drop if obs_firm < 3
+(2,304 observations deleted)
+
+.                                 
+. order gvkey fyear sic sic2 sic3 at sale ///
+>       lev_book cfv zrd_raw zia_raw zid_raw ip nh prof lnat collateral_r q hhi 
+
+. sort gvkey fyear
+
+. save "NA_clean_data.dta", replace
+file NA_clean_data.dta saved
+
+. di as result "Saved: NA_clean_data.dta"
+Saved: NA_clean_data.dta
+
+. 
+. exit
+
+end of do-file
+
+. di as txt ">> Data preparation completed."
+>> Data preparation completed.
+
+. 
+. *-----------------------------*
+. * 4. Run Estimation & Output Script
+. *-----------------------------*
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Do_file"
+/Users/leisz1/Desktop/Dissertation/Regression/Do_file
+
+. di as txt ">> Running Output.do..."
+>> Running Output.do...
+
+. do "Output_competitive.do"
+
+. *===========================================*
+. * Dissertation: Empirical Results Workflow  *
+. *===========================================*
+. 
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. use "NA_clean_data.dta", clear
+((null))
+
+. 
+. *--------------------------------------------------*
+. * Count Firms, Industries, and Firm-Year Observations
+. *--------------------------------------------------*
+. 
+. * Firm-year observations
+. tab industry_type
+
+industry_typ |
+           e |      Freq.     Percent        Cum.
+-------------+-----------------------------------
+ Competitive |     11,647       32.25       32.25
+Concentrated |     24,463       67.75      100.00
+-------------+-----------------------------------
+       Total |     36,110      100.00
+
+. 
+. * Number of unique firms per group
+. preserve
+
+. bysort industry_type gvkey: keep if _n==1
+(43,063 observations deleted)
+
+. bysort industry_type: gen firms = _N
+
+. bysort industry_type: gen byte first = (_n==1)
+
+. list industry_type firms if first, noobs sepby(industry_type)
+
+  +----------------------+
+  | industry_t~e   firms |
+  |----------------------|
+  |  Competitive    1754 |
+  |----------------------|
+  | Concentrated    2927 |
+  |----------------------|
+  |            .    2391 |
+  +----------------------+
+
+. restore
+
+. 
+. * Number of unique industries per group
+. preserve
+
+. bysort industry_type sic2: keep if _n==1
+(50,003 observations deleted)
+
+. bysort industry_type: gen industries = _N
+
+. list industry_type industries if _n==1, noobs sepby(industry_type)
+
+  +------------------------+
+  | industry_~e   indu~ies |
+  |------------------------|
+  | Competitive         24 |
+  +------------------------+
+
+. 
+. * Summary: firm-year, firms, industries
+. tabulate industry_type
+
+industry_typ |
+           e |      Freq.     Percent        Cum.
+-------------+-----------------------------------
+ Competitive |         24       28.24       28.24
+Concentrated |         61       71.76      100.00
+-------------+-----------------------------------
+       Total |         85      100.00
+
+. 
+. 
+. *--------------------------------------------------*
+. * SECTION 4.1: Summary Statistics & Industry Trends
+. *--------------------------------------------------*
+. * Industry-year averages for visualization
+. collapse (mean) z_lev_book z_cfv z_ip z_nh z_prof z_collateral_r z_q z_hhi, by(sic2 fyear)
+
+. save "../Output/industry_year_means.dta", replace
+file ../Output/industry_year_means.dta saved
+
+. 
+. * Reload for tabular output
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. use "NA_clean_data.dta", clear
+((null))
+
+. cd "../Output"
+/Users/leisz1/Desktop/Dissertation/Regression/Output
+
+. 
+. * keep only the two groups (drop mid-range HHI)
+. keep if inlist(industry_type,0,1)
+(14,025 observations deleted)
+
+. 
+. * --- Summary table by concentration group ---
+. estpost tabstat lev_book cfv ip nh prof lnat, ///
+>     by(industry_type) stats(mean median sd range count) ///
+>     columns(statistics)
+
+Summary statistics: mean p50 sd range count
+     for variables: lev_book cfv ip nh prof lnat
+  by categories of: industry_type
+
+industry_typ |   e(mean)     e(p50)      e(sd)   e(range)   e(count) 
+-------------+-------------------------------------------------------
+Competitive  |                                                       
+    lev_book |  .3166548   .2311363   .9838329    55.4282      11647 
+         cfv |  .0913323   .0414155   .2313227   3.539471      11647 
+          ip | -.0071842  -.1558472   .9091999   22.84317      11647 
+          nh |  .8896544   .9462748   .1506911          1      11647 
+        prof | -.0242254   .0398938   .4777539   25.00007      11647 
+        lnat |  6.678806   6.723058   2.396962   15.04327      11647 
+-------------+-------------------------------------------------------
+Concentrated |                                                       
+    lev_book |  .2734987   .1956726   .7094466    56.1087      24463 
+         cfv |  .0884408   .0449813   .1980184   3.705327      24463 
+          ip |  .0068921  -.0871585    .920341   18.86183      24463 
+          nh |  .7565456   .8569675   .2657782          1      24463 
+        prof | -.0265557   .0629044   .8151874   90.57514      24463 
+        lnat |  6.371256   6.448861   2.506891   19.39872      24463 
+-------------+-------------------------------------------------------
+Total        |                                                       
+    lev_book |  .2874184   .2053006   .8084281    56.1087      36110 
+         cfv |  .0893734   .0439283   .2093412   3.705327      36110 
+          ip |  .0023519  -.1159237   .9167734   26.03452      36110 
+          nh |  .7994788   .8989595   .2430002          1      36110 
+        prof | -.0258041   .0552229   .7237418   92.07544      36110 
+        lnat |  6.470454   6.541002   2.476112   19.39872      36110 
+
+. 
+. esttab using "tab_summary_concentration.tex", ///
+>         cells("mean(fmt(3) label(Mean)) p50(fmt(3) label(Median)) sd(fmt(3) label(SD))  range(fmt(3) label (Range)) count(fmt(0) label(Firm-year obs))") //
+> /
+>     label booktabs nonumber ///
+>     title("Summary Statistics by Industry Type") ///
+>     replace
+(output written to tab_summary_concentration.tex)
+
+. 
+. *--------------------------------------------------*
+. * SECTION 4.2: Plain OLS Estimation (Benchmark)    
+. *--------------------------------------------------*
+. xtset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 year
+
+. 
+. keep if industry_type == 0
+(24,463 observations deleted)
+
+. 
+. *--- OLS: ΔLeverage ---
+. reg D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =     7,212
+-------------+----------------------------------   F(8, 7203)      =     28.46
+       Model |  50.9967283         8  6.37459104   Prob > F        =    0.0000
+    Residual |  1613.49761     7,203  .224003556   R-squared       =    0.0306
+-------------+----------------------------------   Adj R-squared   =    0.0296
+       Total |  1664.49434     7,211  .230827117   Root MSE        =    .47329
+
+-----------------------------------------------------------------------------------
+       D_lev_book | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |   .0132365   .0112224     1.18   0.238    -.0087628    .0352358
+         L1_D_cfv |  -.3441827   .0617606    -5.57   0.000    -.4652516   -.2231138
+          L1_D_nh |   .1165015   .0507272     2.30   0.022     .0170614    .2159417
+        L1_D_prof |   .1080359   .0132881     8.13   0.000     .0819873    .1340844
+        L1_D_lnat |  -.0536322   .0217584    -2.46   0.014    -.0962851   -.0109793
+           L1_D_q |  -.0103524    .001188    -8.71   0.000    -.0126812   -.0080237
+L1_D_collateral_r |   .0145174   .0529214     0.27   0.784     -.089224    .1182589
+         L1_D_hhi |  -.2220231   .3560742    -0.62   0.533     -.920033    .4759867
+            _cons |   .0223215   .0059267     3.77   0.000     .0107035    .0339395
+-----------------------------------------------------------------------------------
+
+. estimates store ols_lev
+
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .02956135
+
+. estadd scalar F_stat = e(F)
+
+added scalar:
+             e(F_stat) =  28.457544
+
+. 
+. *--- OLS: ΔCFV ---
+. reg D_cfv L1_D_ip L1_D_lev_book L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =     7,212
+-------------+----------------------------------   F(8, 7203)      =      8.71
+       Model |  .433696355         8  .054212044   Prob > F        =    0.0000
+    Residual |  44.8104887     7,203  .006221087   R-squared       =    0.0096
+-------------+----------------------------------   Adj R-squared   =    0.0085
+       Total |   45.244185     7,211  .006274329   Root MSE        =    .07887
+
+-----------------------------------------------------------------------------------
+            D_cfv | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0072253   .0018707    -3.86   0.000    -.0108923   -.0035583
+    L1_D_lev_book |   -.010712   .0022005    -4.87   0.000    -.0150256   -.0063983
+          L1_D_nh |  -.0010331    .008454    -0.12   0.903    -.0176054    .0155393
+        L1_D_prof |  -.0111393   .0023114    -4.82   0.000    -.0156704   -.0066082
+        L1_D_lnat |  -.0108536   .0036243    -2.99   0.003    -.0179582   -.0037489
+           L1_D_q |  -.0001525   .0002014    -0.76   0.449    -.0005474    .0002423
+L1_D_collateral_r |  -.0182948   .0088258    -2.07   0.038    -.0355959   -.0009937
+         L1_D_hhi |  -.0161436   .0593413    -0.27   0.786      -.13247    .1001828
+            _cons |   -.002417   .0009875    -2.45   0.014    -.0043527   -.0004813
+-----------------------------------------------------------------------------------
+
+. estimates store ols_cfv
+
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .00848568
+
+. estadd scalar F_stat = e(F)
+
+added scalar:
+             e(F_stat) =  8.7142401
+
+. 
+. *--- OLS: ΔIntangible Portfolio ---
+. reg D_ip L1_D_lev_book L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =     7,212
+-------------+----------------------------------   F(8, 7203)      =      5.95
+       Model |  14.4045409         8  1.80056762   Prob > F        =    0.0000
+    Residual |  2180.87975     7,203  .302773809   R-squared       =    0.0066
+-------------+----------------------------------   Adj R-squared   =    0.0055
+       Total |  2195.28429     7,211  .304435486   Root MSE        =    .55025
+
+-----------------------------------------------------------------------------------
+             D_ip | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+    L1_D_lev_book |   .0344533   .0154158     2.23   0.025     .0042339    .0646727
+         L1_D_cfv |   .0508963   .0721206     0.71   0.480    -.0904812    .1922738
+          L1_D_nh |   .0283252   .0589783     0.48   0.631    -.0872897      .14394
+        L1_D_prof |  -.0201556   .0161849    -1.25   0.213    -.0518827    .0115715
+        L1_D_lnat |   .0592633   .0249127     2.38   0.017     .0104271    .1080995
+           L1_D_q |   .0045202    .001407     3.21   0.001     .0017621    .0072783
+L1_D_collateral_r |  -.1960701   .0614442    -3.19   0.001    -.3165186   -.0756215
+         L1_D_hhi |  -.0315107   .4139876    -0.08   0.939    -.8430478    .7800264
+            _cons |  -.0136165   .0068901    -1.98   0.048    -.0271232   -.0001099
+-----------------------------------------------------------------------------------
+
+. estimates store ols_ip
+
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .00545822
+
+. estadd scalar F_stat = e(F)
+
+added scalar:
+             e(F_stat) =  5.9469068
+
+. 
+. *--- Export OLS Results WITH stats ---
+. cd "../Output"
+/Users/leisz1/Desktop/Dissertation/Regression/Output
+
+. esttab ols_lev ols_cfv ols_ip using "tab_ols_results_competitive.tex", ///
+>     se label b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+>     scalars("adj_R2 Adjusted R-squared" "F_stat F-statistic") ///
+>     title("Pooled OLS Results for Benchmark Comparison") ///
+>     booktabs replace
+(output written to tab_ols_results_competitive.tex)
+
+. 
+. 
+. *--------------------------------------------------*
+. * SECTION 4.3: Main GMM System Estimations         
+. *--------------------------------------------------*
+. 
+. keep if industry_type == 0  // 0 = Competitive
+(0 observations deleted)
+
+. 
+. xtset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2024, but with gaps
+         Delta: 1 year
+
+. 
+. *-------------------------------*
+. *--- GMM: ΔLeverage (lev_model)
+. *-------------------------------*
+. xtabond2 D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =      7212
+Time variable : fyear                           Number of groups   =      1356
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 1355)    =      4.26                                      avg =      5.32
+Prob > F      =     0.000                                      max =        21
+-----------------------------------------------------------------------------------
+                  |              Corrected
+       D_lev_book | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |   .0590087   .2107519     0.28   0.780    -.3544267    .4724441
+         L1_D_cfv |   5.513159   2.917478     1.89   0.059    -.2101055    11.23642
+          L1_D_nh |   .0126524   .2699687     0.05   0.963    -.5169496    .5422545
+        L1_D_prof |   .2850025   .1244888     2.29   0.022     .0407908    .5292142
+        L1_D_lnat |  -.0316947   .1050335    -0.30   0.763    -.2377406    .1743513
+           L1_D_q |  -.0167032   .0408622    -0.41   0.683    -.0968632    .0634568
+L1_D_collateral_r |  -.0780191   .2368558    -0.33   0.742     -.542663    .3866249
+         L1_D_hhi |   .2840946   .4073488     0.70   0.486    -.5150082    1.083197
+            _cons |   .0455017   .0134077     3.39   0.001     .0191997    .0718038
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -1.56  Pr > z =  0.119
+Arellano-Bond test for AR(2) in first differences: z =   1.10  Pr > z =  0.270
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  10.26  Prob > chi2 =  0.114
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   5.17  Prob > chi2 =  0.523
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   3.48  Prob > chi2 =  0.324
+    Difference (null H = exogenous): chi2(3)    =   1.69  Prob > chi2 =  0.639
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.00  Prob > chi2 =  0.977
+    Difference (null H = exogenous): chi2(5)    =   5.17  Prob > chi2 =  0.396
+
+
+. 
+. estimates store lev_model
+
+. estadd scalar Wald_chi2 = 4.26
+
+added scalar:
+          e(Wald_chi2) =  4.26
+
+. estadd scalar AR2_p = 0.270
+
+added scalar:
+              e(AR2_p) =  .27
+
+. estadd scalar Hansen_J = 5.17 
+
+added scalar:
+           e(Hansen_J) =  5.17
+
+. 
+. 
+. *----------------------------*
+. *--- GMM: ΔCFV (cfv_model)
+. *----------------------------*
+. xtabond2 D_cfv L1_D_ip L1_D_lev_book L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_lev_book L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =      7212
+Time variable : fyear                           Number of groups   =      1356
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 1355)    =      4.32                                      avg =      5.32
+Prob > F      =     0.000                                      max =        21
+-----------------------------------------------------------------------------------
+                  |              Corrected
+            D_cfv | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0417473   .0386876    -1.08   0.281    -.1176415    .0341469
+    L1_D_lev_book |  -.0113649   .0090331    -1.26   0.209    -.0290853    .0063556
+          L1_D_nh |  -.0997306   .0767567    -1.30   0.194    -.2503054    .0508443
+        L1_D_prof |  -.0048564   .0059325    -0.82   0.413    -.0164943    .0067815
+        L1_D_lnat |   .0028821   .0161894     0.18   0.859    -.0288769     .034641
+           L1_D_q |  -.0005726   .0002794    -2.05   0.041    -.0011207   -.0000246
+L1_D_collateral_r |  -.0341331   .0144056    -2.37   0.018    -.0623928   -.0058734
+         L1_D_hhi |   .0375497   .0496501     0.76   0.450    -.0598497    .1349491
+            _cons |  -.0034784   .0019355    -1.80   0.073    -.0072753    .0003185
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_lev_book L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_lev_book L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -2.43  Pr > z =  0.015
+Arellano-Bond test for AR(2) in first differences: z =  -1.60  Pr > z =  0.110
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  66.32  Prob > chi2 =  0.000
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   6.70  Prob > chi2 =  0.349
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   3.70  Prob > chi2 =  0.295
+    Difference (null H = exogenous): chi2(3)    =   3.00  Prob > chi2 =  0.392
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   1.01  Prob > chi2 =  0.316
+    Difference (null H = exogenous): chi2(5)    =   5.70  Prob > chi2 =  0.337
+
+
+. 
+. estimates store cfv_model
+
+. estadd scalar Wald_chi2 = 4.32
+
+added scalar:
+          e(Wald_chi2) =  4.32
+
+. estadd scalar AR2_p = 0.110
+
+added scalar:
+              e(AR2_p) =  .11
+
+. estadd scalar Hansen_J = 6.70 
+
+added scalar:
+           e(Hansen_J) =  6.7
+
+. 
+. 
+. *----------------------------*
+. *--- GMM: ΔIP (ip_model)
+. *----------------------------*
+. xtabond2 D_ip L1_D_lev_book L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_lev_book L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =      7212
+Time variable : fyear                           Number of groups   =      1356
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 1355)    =      2.17                                      avg =      5.32
+Prob > F      =     0.028                                      max =        21
+-----------------------------------------------------------------------------------
+                  |              Corrected
+             D_ip | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+    L1_D_lev_book |   .0572021   .1180886     0.48   0.628    -.1744543    .2888585
+         L1_D_cfv |   1.176279   .9718317     1.21   0.226     -.730179    3.082737
+          L1_D_nh |   .5240287   .3260814     1.61   0.108    -.1156505    1.163708
+        L1_D_prof |   .0701765   .0898802     0.78   0.435    -.1061429    .2464958
+        L1_D_lnat |  -.0552354   .0406967    -1.36   0.175    -.1350708       .0246
+           L1_D_q |   .0043598   .0035984     1.21   0.226    -.0026992    .0114187
+L1_D_collateral_r |  -.1161391   .1555489    -0.75   0.455    -.4212819    .1890037
+         L1_D_hhi |  -.3549291   .4172819    -0.85   0.395    -1.173518    .4636597
+            _cons |   .0003364   .0072413     0.05   0.963     -.013869    .0145418
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_lev_book L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_lev_book L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -5.73  Pr > z =  0.000
+Arellano-Bond test for AR(2) in first differences: z =   2.00  Pr > z =  0.046
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  20.39  Prob > chi2 =  0.002
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   7.38  Prob > chi2 =  0.287
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   2.34  Prob > chi2 =  0.505
+    Difference (null H = exogenous): chi2(3)    =   5.04  Prob > chi2 =  0.169
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.19  Prob > chi2 =  0.665
+    Difference (null H = exogenous): chi2(5)    =   7.19  Prob > chi2 =  0.207
+
+
+. 
+. estimates store ip_model
+
+. estadd scalar Wald_chi2 = 2.17
+
+added scalar:
+          e(Wald_chi2) =  2.17
+
+. estadd scalar AR2_p = 0.046
+
+added scalar:
+              e(AR2_p) =  .046
+
+. estadd scalar Hansen_J = 7.38
+
+added scalar:
+           e(Hansen_J) =  7.38
+
+. 
+. *--------------------------------------------------*
+. *--- Export GMM results to LaTeX with test stats ---
+. *--------------------------------------------------*
+. cd "../Output"
+/Users/leisz1/Desktop/Dissertation/Regression/Output
+
+. 
+. esttab lev_model cfv_model ip_model using "tab_main_gmm_results_competitive.tex", ///
+>     se label b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+>     scalars("Wald_chi2 Wald χ²/F-test" ///
+>             "Hansen_J Hansen J-statistic (χ², df = 6)" ///
+>             "AR2_p AR(2) p-value") ///
+>     title("System GMM Results: Competitive Industries") ///
+>     booktabs replace
+(output written to tab_main_gmm_results_competitive.tex)
+
+. 
+. restore
+
+. 
+. *--------------------------------------------------*
+. * SECTION 4.4: Subsample Estimation by Leverage  
+. *--------------------------------------------------*
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. use "NA_clean_data.dta", clear
+((null))
+
+. 
+. gen ip_x_collateral = L1_D_ip * L1_D_collateral_r
+(12,580 missing values generated)
+
+. 
+. xtset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 year
+
+. 
+. preserve
+
+. keep if industry_type == 0
+(38,488 observations deleted)
+
+. gen high_leverage = z_lev_book > 0 if !missing(z_lev_book)
+
+. 
+. keep if industry_type == 0
+(0 observations deleted)
+
+. 
+. * Low-collateral firms
+. keep if high_leverage == 0
+(4,866 observations deleted)
+
+. xtabond2 D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r ip_x_collateral L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =      4619
+Time variable : fyear                           Number of groups   =      1038
+Number of instruments = 15                      Obs per group: min =         1
+F(9, 1037)    =    199.60                                      avg =      4.45
+Prob > F      =     0.000                                      max =        21
+-----------------------------------------------------------------------------------
+                  |              Corrected
+       D_lev_book | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0034476   .0164107    -0.21   0.834    -.0356495    .0287543
+         L1_D_cfv |  -.1280524   .2208223    -0.58   0.562    -.5613618     .305257
+          L1_D_nh |  -.0073963   .0384629    -0.19   0.848    -.0828703    .0680778
+        L1_D_prof |   .0164025   .0200615     0.82   0.414    -.0229633    .0557684
+        L1_D_lnat |     .00148   .0082422     0.18   0.858    -.0146934    .0176533
+           L1_D_q |  -.0022144   .0001288   -17.19   0.000    -.0024671   -.0019617
+L1_D_collateral_r |   -.002715   .0188152    -0.14   0.885    -.0396353    .0342052
+  ip_x_collateral |  -.0298385   .0821785    -0.36   0.717    -.1910936    .1314165
+         L1_D_hhi |  -.0824385   .2030944    -0.41   0.685    -.4809613    .3160843
+            _cons |  -.0090587   .0020158    -4.49   0.000    -.0130142   -.0051031
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -7.90  Pr > z =  0.000
+Arellano-Bond test for AR(2) in first differences: z =  -0.35  Pr > z =  0.729
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(5)    =   3.36  Prob > chi2 =  0.644
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(5)    =   2.58  Prob > chi2 =  0.765
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(2)    =   0.71  Prob > chi2 =  0.701
+    Difference (null H = exogenous): chi2(3)    =   1.87  Prob > chi2 =  0.600
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(0)    =   0.00  Prob > chi2 =      .
+    Difference (null H = exogenous): chi2(5)    =   2.58  Prob > chi2 =  0.765
+
+
+. estimates store lev_lowcoll
+
+. restore
+
+. 
+. * High-collateral firms
+. preserve
+
+. gen high_leverage = z_lev_book > 0 if !missing(z_lev_book)
+
+. 
+. keep if high_leverage == 1
+(32,676 observations deleted)
+
+. xtabond2 D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r ip_x_collateral L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     11825
+Time variable : fyear                           Number of groups   =      2563
+Number of instruments = 15                      Obs per group: min =         1
+F(9, 2562)    =      5.85                                      avg =      4.61
+Prob > F      =     0.000                                      max =        21
+-----------------------------------------------------------------------------------
+                  |              Corrected
+       D_lev_book | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |   -.223274   .5249104    -0.43   0.671    -1.252566    .8060177
+         L1_D_cfv |   5.363206   4.699071     1.14   0.254    -3.851157    14.57757
+          L1_D_nh |   -.622664   .7729197    -0.81   0.421    -2.138275    .8929467
+        L1_D_prof |   .2098124   .2991543     0.70   0.483    -.3767963    .7964211
+        L1_D_lnat |  -.2384645   .3725235    -0.64   0.522    -.9689422    .4920132
+           L1_D_q |  -.0042199   .0122746    -0.34   0.731    -.0282891    .0198492
+L1_D_collateral_r |  -.2515972   .6562883    -0.38   0.701    -1.538507    1.035312
+  ip_x_collateral |  -6.898914    6.18205    -1.12   0.265    -19.02124    5.223408
+         L1_D_hhi |    .467432   .5862501     0.80   0.425    -.6821401    1.617004
+            _cons |   .0337578   .0451166     0.75   0.454    -.0547109    .1222264
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -1.92  Pr > z =  0.055
+Arellano-Bond test for AR(2) in first differences: z =   1.53  Pr > z =  0.127
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(5)    =   2.19  Prob > chi2 =  0.822
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(5)    =   2.12  Prob > chi2 =  0.832
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(2)    =   0.22  Prob > chi2 =  0.895
+    Difference (null H = exogenous): chi2(3)    =   1.90  Prob > chi2 =  0.593
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(0)    =   0.00  Prob > chi2 =      .
+    Difference (null H = exogenous): chi2(5)    =   2.12  Prob > chi2 =  0.832
+
+
+. estimates store lev_highcoll
+
+. restore
+
+. 
+. * All competitive firms
+. xtabond2 D_lev_book L1_D_ip L1_D_collateral_r ip_x_collateral ///
+>     L1_D_cfv L1_D_nh L1_D_prof L1_D_lnat L1_D_q L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_collateral_r ip_x_collateral L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     36559
+Time variable : fyear                           Number of groups   =      4750
+Number of instruments = 20                      Obs per group: min =         1
+F(9, 4749)    =      3.49                                      avg =      7.70
+Prob > F      =     0.000                                      max =        22
+-----------------------------------------------------------------------------------
+                  |              Corrected
+       D_lev_book | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |   .0214485   .1234168     0.17   0.862    -.2205056    .2634026
+L1_D_collateral_r |  -.9140152   1.303701    -0.70   0.483    -3.469874    1.641844
+  ip_x_collateral |  -.2021557   1.177142    -0.17   0.864    -2.509901    2.105589
+         L1_D_cfv |   .8854428   3.390574     0.26   0.794    -5.761655     7.53254
+          L1_D_nh |  -.1208856   .1488633    -0.81   0.417    -.4127267    .1709555
+        L1_D_prof |  -.0145457   .2809132    -0.05   0.959    -.5652658    .5361745
+        L1_D_lnat |  -.1759302   .2700739    -0.65   0.515    -.7054002    .3535398
+           L1_D_q |   .0012102   .0086872     0.14   0.889    -.0158208    .0182412
+         L1_D_hhi |  -.0240888   .0820558    -0.29   0.769    -.1849561    .1367785
+            _cons |   .0356007   .0267622     1.33   0.183    -.0168655     .088067
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_collateral_r ip_x_collateral L1_D_cfv L1_D_nh)
+    collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_collateral_r ip_x_collateral L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -2.33  Pr > z =  0.020
+Arellano-Bond test for AR(2) in first differences: z =   0.69  Pr > z =  0.488
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(10)   =  61.81  Prob > chi2 =  0.000
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(10)   =   7.51  Prob > chi2 =  0.677
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(5)    =   2.69  Prob > chi2 =  0.748
+    Difference (null H = exogenous): chi2(5)    =   4.82  Prob > chi2 =  0.438
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_hhi)
+    Hansen test excluding group:     chi2(6)    =   5.09  Prob > chi2 =  0.533
+    Difference (null H = exogenous): chi2(4)    =   2.42  Prob > chi2 =  0.659
+
+
+. estimates store lev_interact
+
+. 
+. * Export interaction + subsample results
+. esttab lev_lowcoll lev_highcoll lev_interact using "../Output/tab_lev_subsamples_interact.tex", ///
+>     se label b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+>     title("Subsample and Interaction GMM Results: Leverage Equation") ///
+>     booktabs replace
+(output written to ../Output/tab_lev_subsamples_interact.tex)
+
+. 
+. 
+. 
+. 
+end of do-file
+
+. 
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Do_file"
+/Users/leisz1/Desktop/Dissertation/Regression/Do_file
+
+. do "Output_concentrated.do"
+
+. *===========================================*
+. * Dissertation: Empirical Results Workflow  *
+. *===========================================*
+. 
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. use "NA_clean_data.dta", clear
+((null))
+
+. 
+. *--------------------------------------------------*
+. * SECTION 4.1: Plain OLS Estimation (Benchmark)    
+. *--------------------------------------------------*
+. preserve
+
+. keep if industry_type == 1
+(25,672 observations deleted)
+
+. 
+. xtset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 year
+
+. 
+. *--- OLS: ΔLeverage ---
+. reg D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =    18,820
+-------------+----------------------------------   F(8, 18811)     =     48.44
+       Model |  29.1963595         8  3.64954494   Prob > F        =    0.0000
+    Residual |  1417.32296    18,811  .075345434   R-squared       =    0.0202
+-------------+----------------------------------   Adj R-squared   =    0.0198
+       Total |  1446.51932    18,819  .076864834   Root MSE        =    .27449
+
+-----------------------------------------------------------------------------------
+       D_lev_book | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0087872   .0042978    -2.04   0.041    -.0172112   -.0003632
+         L1_D_cfv |   .0548766    .029495     1.86   0.063    -.0029364    .1126895
+          L1_D_nh |  -.0175188   .0123416    -1.42   0.156    -.0417095    .0066719
+        L1_D_prof |    .109163   .0092029    11.86   0.000     .0911245    .1272015
+        L1_D_lnat |  -.0257837   .0086763    -2.97   0.003      -.04279   -.0087774
+           L1_D_q |  -.0086842   .0007478   -11.61   0.000    -.0101499   -.0072185
+L1_D_collateral_r |   .1375623   .0199814     6.88   0.000     .0983969    .1767277
+         L1_D_hhi |  -.0324672   .0398161    -0.82   0.415    -.1105103    .0455759
+            _cons |   .0120584   .0020889     5.77   0.000     .0079639    .0161529
+-----------------------------------------------------------------------------------
+
+. estimates store ols_lev
+
+. 
+. display e(r2_a)
+.01976717
+
+. display e(df_r)
+18811
+
+. display e(F)
+48.437506
+
+. 
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .01976717
+
+. estadd scalar df = e(df_r)
+
+added scalar:
+                 e(df) =  18811
+
+. estadd scalar F_stat = e(F)
+
+added scalar:
+             e(F_stat) =  48.437506
+
+. estadd scalar N_obs = e(N)
+
+added scalar:
+              e(N_obs) =  18820
+
+. 
+. 
+. *--- OLS: ΔCFV ---
+. reg D_cfv L1_D_ip L1_D_lev_book L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =    18,820
+-------------+----------------------------------   F(8, 18811)     =     50.48
+       Model |  1.76692897         8  .220866121   Prob > F        =    0.0000
+    Residual |  82.3113258    18,811  .004375702   R-squared       =    0.0210
+-------------+----------------------------------   Adj R-squared   =    0.0206
+       Total |  84.0782548    18,819  .004467732   Root MSE        =    .06615
+
+-----------------------------------------------------------------------------------
+            D_cfv | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |   .0003754   .0010357     0.36   0.717    -.0016548    .0024055
+    L1_D_lev_book |   .0004308   .0021158     0.20   0.839    -.0037164    .0045779
+          L1_D_nh |   .0033113   .0029742     1.11   0.266    -.0025184     .009141
+        L1_D_prof |    .016938   .0022579     7.50   0.000     .0125122    .0213638
+        L1_D_lnat |  -.0260069   .0020902   -12.44   0.000    -.0301039   -.0219099
+           L1_D_q |   -.000211   .0001816    -1.16   0.245    -.0005669    .0001449
+L1_D_collateral_r |  -.0692681   .0048157   -14.38   0.000    -.0787074   -.0598288
+         L1_D_hhi |   .0127261   .0095951     1.33   0.185    -.0060812    .0315334
+            _cons |  -.0005097   .0005033    -1.01   0.311    -.0014963    .0004768
+-----------------------------------------------------------------------------------
+
+. estimates store ols_cfv
+
+. 
+. display e(r2_a)
+.02059895
+
+. display e(df_r)
+18811
+
+. display e(F)
+50.475588
+
+. 
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .02059895
+
+. estadd scalar df = e(df_r)
+
+added scalar:
+                 e(df) =  18811
+
+. estadd scalar F_stat = e(F)  
+
+added scalar:
+             e(F_stat) =  50.475588
+
+. estadd scalar N_obs = e(N)
+
+added scalar:
+              e(N_obs) =  18820
+
+. 
+. *--- OLS: ΔIntangible Portfolio ---
+. reg D_ip L1_D_lev_book L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =    18,820
+-------------+----------------------------------   F(8, 18811)     =      6.24
+       Model |  11.3548795         8  1.41935993   Prob > F        =    0.0000
+    Residual |  4280.35011    18,811  .227545059   R-squared       =    0.0026
+-------------+----------------------------------   Adj R-squared   =    0.0022
+       Total |  4291.70499    18,819  .228051703   Root MSE        =    .47702
+
+-----------------------------------------------------------------------------------
+             D_ip | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+    L1_D_lev_book |   .0325837   .0152738     2.13   0.033     .0026457    .0625217
+         L1_D_cfv |  -.0581173   .0513133    -1.13   0.257     -.158696    .0424615
+          L1_D_nh |  -.0232147   .0214439    -1.08   0.279    -.0652467    .0188172
+        L1_D_prof |   .0554864   .0163425     3.40   0.001     .0234535    .0875192
+        L1_D_lnat |   .0374954    .014803     2.53   0.011     .0084802    .0665106
+           L1_D_q |   .0012054   .0013112     0.92   0.358    -.0013647    .0037754
+L1_D_collateral_r |  -.0615492   .0347361    -1.77   0.076    -.1296351    .0065367
+         L1_D_hhi |  -.0801957   .0691781    -1.16   0.246     -.215791    .0553995
+            _cons |  -.0096326   .0036271    -2.66   0.008     -.016742   -.0025232
+-----------------------------------------------------------------------------------
+
+. estimates store ols_ip
+
+. 
+. display e(r2_a)
+.00222162
+
+. display e(df_r)
+18811
+
+. display e(F)
+6.2377093
+
+. 
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .00222162
+
+. estadd scalar df = e(df_r)
+
+added scalar:
+                 e(df) =  18811
+
+. estadd scalar F_stat = e(F)
+
+added scalar:
+             e(F_stat) =  6.2377093
+
+. estadd scalar N_obs = e(N)
+
+added scalar:
+              e(N_obs) =  18820
+
+. 
+. *--- Export OLS Results WITH stats ---
+. cd "../Output"
+/Users/leisz1/Desktop/Dissertation/Regression/Output
+
+. esttab ols_lev ols_cfv ols_ip using "tab_ols_results_concentrated.tex", ///
+>     se label b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+>     scalars("adj_R2 Adjusted R-squared" "df Degrees of freedom" "F_stat F-statistic" "N_obs Observations") ///
+>     title("Pooled OLS Results for Benchmark Comparison") ///
+>     booktabs replace
+(output written to tab_ols_results_concentrated.tex)
+
+. 
+. 
+. *--------------------------------------------------*
+. * SECTION 4.2: Main GMM System Estimations         
+. *--------------------------------------------------*
+. cd "../Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. use "NA_clean_data.dta", clear
+((null))
+
+. 
+. keep if industry_type == 1
+(25,672 observations deleted)
+
+. 
+. xtset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 year
+
+. 
+. *--- GMM: ΔLeverage ---
+. xtabond2 D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     18820
+Time variable : fyear                           Number of groups   =      2694
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 2693)    =      4.39                                      avg =      6.99
+Prob > F      =     0.000                                      max =        22
+-----------------------------------------------------------------------------------
+                  |              Corrected
+       D_lev_book | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.1288593   .2291516    -0.56   0.574    -.5781901    .3204715
+         L1_D_cfv |   .3599852   1.302315     0.28   0.782    -2.193654    2.913624
+          L1_D_nh |  -.0624717    .198111    -0.32   0.753    -.4509367    .3259933
+        L1_D_prof |   .0279571   .0735317     0.38   0.704    -.1162271    .1721414
+        L1_D_lnat |   .0276775    .092768     0.30   0.765    -.1542262    .2095811
+           L1_D_q |  -.0049636    .010042    -0.49   0.621    -.0246544    .0147273
+L1_D_collateral_r |  -.0472514   .1210319    -0.39   0.696    -.2845763    .1900735
+         L1_D_hhi |   .0042287   .0400964     0.11   0.916    -.0743942    .0828516
+            _cons |   .0092295   .0049582     1.86   0.063    -.0004927    .0189518
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -2.84  Pr > z =  0.004
+Arellano-Bond test for AR(2) in first differences: z =  -1.27  Pr > z =  0.203
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  78.86  Prob > chi2 =  0.000
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   6.46  Prob > chi2 =  0.374
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   5.32  Prob > chi2 =  0.150
+    Difference (null H = exogenous): chi2(3)    =   1.14  Prob > chi2 =  0.768
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.39  Prob > chi2 =  0.533
+    Difference (null H = exogenous): chi2(5)    =   6.07  Prob > chi2 =  0.300
+
+
+. estimates store lev_model
+
+. 
+. estadd scalar Wald_chi2 = 4.39
+
+added scalar:
+          e(Wald_chi2) =  4.39
+
+. estadd scalar AR2_p = 0.203
+
+added scalar:
+              e(AR2_p) =  .203
+
+. estadd scalar Hansen_J = 6.46
+
+added scalar:
+           e(Hansen_J) =  6.46
+
+. 
+. 
+. *--- GMM: ΔCFV ---
+. xtabond2 D_cfv L1_D_ip L1_D_lev_book L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_lev_book L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     18820
+Time variable : fyear                           Number of groups   =      2694
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 2693)    =      5.00                                      avg =      6.99
+Prob > F      =     0.000                                      max =        22
+-----------------------------------------------------------------------------------
+                  |              Corrected
+            D_cfv | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0101591    .014554    -0.70   0.485    -.0386973    .0183792
+    L1_D_lev_book |   .0256073   .0198758     1.29   0.198     -.013366    .0645806
+          L1_D_nh |  -.0056094   .0216323    -0.26   0.795    -.0480269    .0368082
+        L1_D_prof |   .0361472   .0162781     2.22   0.026     .0042283     .068066
+        L1_D_lnat |  -.0122603   .0100702    -1.22   0.224    -.0320065    .0074859
+           L1_D_q |  -.0003312   .0004533    -0.73   0.465      -.00122    .0005577
+L1_D_collateral_r |  -.0537612   .0295073    -1.82   0.069    -.1116205     .004098
+         L1_D_hhi |   .0002917   .0092338     0.03   0.975    -.0178143    .0183977
+            _cons |   -.001444   .0010108    -1.43   0.153    -.0034261    .0005381
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_lev_book L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_lev_book L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -4.94  Pr > z =  0.000
+Arellano-Bond test for AR(2) in first differences: z =   0.08  Pr > z =  0.933
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  51.68  Prob > chi2 =  0.000
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   7.00  Prob > chi2 =  0.321
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   4.42  Prob > chi2 =  0.219
+    Difference (null H = exogenous): chi2(3)    =   2.58  Prob > chi2 =  0.462
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.95  Prob > chi2 =  0.330
+    Difference (null H = exogenous): chi2(5)    =   6.05  Prob > chi2 =  0.301
+
+
+. estimates store cfv_model
+
+. 
+. estadd scalar Wald_chi2 = 5.00
+
+added scalar:
+          e(Wald_chi2) =  5
+
+. estadd scalar AR2_p = 0.933
+
+added scalar:
+              e(AR2_p) =  .933
+
+. estadd scalar Hansen_J = 7.00
+
+added scalar:
+           e(Hansen_J) =  7
+
+. 
+. 
+. *--- GMM: ΔIntangible Portfolio ---
+. xtabond2 D_ip L1_D_lev_book L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_lev_book L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     18820
+Time variable : fyear                           Number of groups   =      2694
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 2693)    =      5.36                                      avg =      6.99
+Prob > F      =     0.000                                      max =        22
+-----------------------------------------------------------------------------------
+                  |              Corrected
+             D_ip | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+    L1_D_lev_book |   .0863876    .131807     0.66   0.512    -.1720655    .3448407
+         L1_D_cfv |  -.0224381   1.311999    -0.02   0.986    -2.595065    2.550189
+          L1_D_nh |  -.3506897   .2127178    -1.65   0.099    -.7677963     .066417
+        L1_D_prof |   .1090758   .0772794     1.41   0.158    -.0424573    .2606088
+        L1_D_lnat |  -.1210954   .0274486    -4.41   0.000    -.1749179    -.067273
+           L1_D_q |   .0004244   .0025594     0.17   0.868    -.0045941    .0054429
+L1_D_collateral_r |  -.0498636   .0573777    -0.87   0.385    -.1623724    .0626453
+         L1_D_hhi |  -.1380041   .0815798    -1.69   0.091    -.2979695    .0219614
+            _cons |  -.0010739   .0045947    -0.23   0.815    -.0100834    .0079356
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_lev_book L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_lev_book L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z = -15.14  Pr > z =  0.000
+Arellano-Bond test for AR(2) in first differences: z =   1.74  Pr > z =  0.082
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =   4.02  Prob > chi2 =  0.674
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   2.52  Prob > chi2 =  0.866
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   1.79  Prob > chi2 =  0.618
+    Difference (null H = exogenous): chi2(3)    =   0.74  Prob > chi2 =  0.864
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.41  Prob > chi2 =  0.520
+    Difference (null H = exogenous): chi2(5)    =   2.11  Prob > chi2 =  0.834
+
+
+. estimates store ip_model
+
+. 
+. estadd scalar Wald_chi2 = 5.36
+
+added scalar:
+          e(Wald_chi2) =  5.36
+
+. estadd scalar AR2_p = 0.082
+
+added scalar:
+              e(AR2_p) =  .082
+
+. estadd scalar Hansen_J = 2.52
+
+added scalar:
+           e(Hansen_J) =  2.52
+
+. 
+. 
+. *--- Export GMM results WITH post-estimation tests ---
+. cd "../Output"
+/Users/leisz1/Desktop/Dissertation/Regression/Output
+
+. esttab lev_model cfv_model ip_model using "tab_main_gmm_results_concentrated.tex", ///
+>     se label b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+>         scalars("Wald_chi2 Wald χ²/F-test" ///
+>             "Hansen_J Hansen J-statistic (χ², df = 6)" ///
+>             "AR2_p AR(2) p-value") ///
+>     title("System GMM Results: Leverage, Risk, and Intangible Positioning") ///
+>     booktabs replace
+(output written to tab_main_gmm_results_concentrated.tex)
+
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+end of do-file
+
+. 
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Do_file"
+/Users/leisz1/Desktop/Dissertation/Regression/Do_file
+
+. do "Output_full_data.do"
+
+. *===========================================*
+. * Dissertation: Empirical Results Workflow  *
+. *===========================================*
+. 
+. cd "/Users/leisz1/Desktop/Dissertation/Regression/Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. use "NA_clean_data.dta", clear
+((null))
+
+. 
+. *--------------------------------------------------*
+. * SECTION 4.1: Plain OLS Estimation (Benchmark)    
+. *--------------------------------------------------*
+. xtset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 year
+
+. 
+. *--- OLS: ΔLeverage ---
+. reg D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =    36,559
+-------------+----------------------------------   F(8, 36550)     =    134.85
+       Model |  451.332492         8  56.4165615   Prob > F        =    0.0000
+    Residual |  15290.7417    36,550  .418351346   R-squared       =    0.0287
+-------------+----------------------------------   Adj R-squared   =    0.0285
+       Total |  15742.0742    36,558  .430605454   Root MSE        =     .6468
+
+-----------------------------------------------------------------------------------
+       D_lev_book | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0276438   .0071458    -3.87   0.000    -.0416498   -.0136378
+         L1_D_cfv |   .0049844   .0414511     0.12   0.904     -.076261    .0862298
+          L1_D_nh |   .0045705   .0231975     0.20   0.844    -.0408973    .0500383
+        L1_D_prof |  -.3612338   .0116261   -31.07   0.000    -.3840213   -.3384463
+        L1_D_lnat |   .0773126   .0137267     5.63   0.000     .0504078    .1042174
+           L1_D_q |   .0046235   .0007593     6.09   0.000     .0031353    .0061117
+L1_D_collateral_r |  -.0974407   .0323111    -3.02   0.003    -.1607714     -.03411
+         L1_D_hhi |  -.0527913   .0894774    -0.59   0.555    -.2281696     .122587
+            _cons |   .0129357   .0035456     3.65   0.000     .0059862    .0198851
+-----------------------------------------------------------------------------------
+
+. estimates store ols_lev
+
+. 
+. display e(r2_a)
+.02845786
+
+. display e(df_r)
+36550
+
+. display e(F)
+134.8545
+
+. 
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .02845786
+
+. estadd scalar df = e(df_r)
+
+added scalar:
+                 e(df) =  36550
+
+. estadd scalar F_stat = e(F)
+
+added scalar:
+             e(F_stat) =  134.8545
+
+. estadd scalar N_obs = e(N)
+
+added scalar:
+              e(N_obs) =  36559
+
+. 
+. 
+. *--- OLS: ΔCFV ---
+. reg D_cfv L1_D_ip L1_D_lev_book L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =    36,559
+-------------+----------------------------------   F(8, 36550)     =     18.72
+       Model |  1.07127867         8  .133909834   Prob > F        =    0.0000
+    Residual |  261.508596    36,550  .007154818   R-squared       =    0.0041
+-------------+----------------------------------   Adj R-squared   =    0.0039
+       Total |  262.579875    36,558  .007182556   Root MSE        =    .08459
+
+-----------------------------------------------------------------------------------
+            D_cfv | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0003675   .0009345    -0.39   0.694    -.0021991    .0014641
+    L1_D_lev_book |  -.0021842    .001436    -1.52   0.128    -.0049988    .0006304
+          L1_D_nh |  -.0015291   .0030337    -0.50   0.614    -.0074753    .0044171
+        L1_D_prof |   .0044529   .0015806     2.82   0.005     .0013549    .0075508
+        L1_D_lnat |  -.0167675   .0017941    -9.35   0.000    -.0202841   -.0132509
+           L1_D_q |  -.0004412   .0000995    -4.43   0.000    -.0006362   -.0002461
+L1_D_collateral_r |  -.0351874     .00423    -8.32   0.000    -.0434783   -.0268965
+         L1_D_hhi |    .016696   .0117015     1.43   0.154    -.0062394    .0396313
+            _cons |  -.0028534   .0004636    -6.15   0.000     -.003762   -.0019447
+-----------------------------------------------------------------------------------
+
+. estimates store ols_cfv
+
+. 
+. display e(r2_a)
+.00386183
+
+. display e(df_r)
+36550
+
+. display e(F)
+18.716036
+
+. 
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .00386183
+
+. estadd scalar df = e(df_r)
+
+added scalar:
+                 e(df) =  36550
+
+. estadd scalar F_stat = e(F)  
+
+added scalar:
+             e(F_stat) =  18.716036
+
+. estadd scalar N_obs = e(N)
+
+added scalar:
+              e(N_obs) =  36559
+
+. 
+. *--- OLS: ΔIntangible Portfolio ---
+. reg D_ip L1_D_lev_book L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+
+      Source |       SS           df       MS      Number of obs   =    36,559
+-------------+----------------------------------   F(8, 36550)     =      9.56
+       Model |  19.4978245         8  2.43722807   Prob > F        =    0.0000
+    Residual |   9319.3067    36,550  .254974192   R-squared       =    0.0021
+-------------+----------------------------------   Adj R-squared   =    0.0019
+       Total |  9338.80453    36,558  .255451735   Root MSE        =    .50495
+
+-----------------------------------------------------------------------------------
+             D_ip | Coefficient  Std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+    L1_D_lev_book |   .0178143   .0085735     2.08   0.038     .0010101    .0346186
+         L1_D_cfv |   .0232062   .0323642     0.72   0.473    -.0402285    .0866409
+          L1_D_nh |  -.0232967   .0181071    -1.29   0.198    -.0587872    .0121938
+        L1_D_prof |  -.0126159   .0094614    -1.33   0.182    -.0311606    .0059287
+        L1_D_lnat |   .0484632   .0105657     4.59   0.000      .027754    .0691723
+           L1_D_q |    .000882   .0005944     1.48   0.138    -.0002831    .0020472
+L1_D_collateral_r |  -.1121521   .0252399    -4.44   0.000     -.161623   -.0626811
+         L1_D_hhi |  -.0596411   .0698481    -0.85   0.393    -.1965455    .0772632
+            _cons |  -.0095401   .0027679    -3.45   0.001    -.0149653    -.004115
+-----------------------------------------------------------------------------------
+
+. estimates store ols_ip
+
+. 
+. display e(r2_a)
+.00186941
+
+. display e(df_r)
+36550
+
+. display e(F)
+9.5587246
+
+. 
+. estadd scalar adj_R2 = e(r2_a)
+
+added scalar:
+             e(adj_R2) =  .00186941
+
+. estadd scalar df = e(df_r)
+
+added scalar:
+                 e(df) =  36550
+
+. estadd scalar F_stat = e(F)
+
+added scalar:
+             e(F_stat) =  9.5587246
+
+. estadd scalar N_obs = e(N)
+
+added scalar:
+              e(N_obs) =  36559
+
+. 
+. *--- Export OLS Results WITH stats ---
+. cd "../Output"
+/Users/leisz1/Desktop/Dissertation/Regression/Output
+
+. esttab ols_lev ols_cfv ols_ip using "tab_ols_results_full.tex", ///
+>     se label b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+>     scalars("adj_R2 Adjusted R-squared" "df Degrees of freedom" "F_stat F-statistic" "N_obs Observations") ///
+>     title("Pooled OLS Results for Benchmark Comparison") ///
+>     booktabs replace
+(output written to tab_ols_results_full.tex)
+
+. 
+. 
+. *--------------------------------------------------*
+. * SECTION 4.2: Main GMM System Estimations         
+. *--------------------------------------------------*
+. cd "../Data"
+/Users/leisz1/Desktop/Dissertation/Regression/Data
+
+. use "NA_clean_data.dta", clear
+((null))
+
+. 
+. xtset gvkey fyear, yearly
+
+Panel variable: gvkey (unbalanced)
+ Time variable: fyear, 2002 to 2025, but with gaps
+         Delta: 1 year
+
+. 
+. *--- GMM: ΔLeverage ---
+. xtabond2 D_lev_book L1_D_ip L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     36559
+Time variable : fyear                           Number of groups   =      4750
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 4749)    =      4.47                                      avg =      7.70
+Prob > F      =     0.000                                      max =        22
+-----------------------------------------------------------------------------------
+                  |              Corrected
+       D_lev_book | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |   .0061623   .1130322     0.05   0.957    -.2154332    .2277578
+         L1_D_cfv |   3.774081    3.64149     1.04   0.300    -3.364927    10.91309
+          L1_D_nh |  -.1557776   .1446417    -1.08   0.282    -.4393424    .1277872
+        L1_D_prof |   .1576774   .2055325     0.77   0.443    -.2452615    .5606164
+        L1_D_lnat |   .0272629   .0737713     0.37   0.712    -.1173631    .1718888
+           L1_D_q |   -.003221   .0100942    -0.32   0.750    -.0230103    .0165683
+L1_D_collateral_r |  -.0068701   .1143563    -0.06   0.952    -.2310614    .2173213
+         L1_D_hhi |  -.0398809   .0807143    -0.49   0.621    -.1981183    .1183565
+            _cons |   .0299622   .0125365     2.39   0.017     .0053849    .0545394
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -2.01  Pr > z =  0.045
+Arellano-Bond test for AR(2) in first differences: z =   0.95  Pr > z =  0.340
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  35.10  Prob > chi2 =  0.000
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   5.39  Prob > chi2 =  0.495
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   1.02  Prob > chi2 =  0.796
+    Difference (null H = exogenous): chi2(3)    =   4.37  Prob > chi2 =  0.224
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.22  Prob > chi2 =  0.642
+    Difference (null H = exogenous): chi2(5)    =   5.17  Prob > chi2 =  0.395
+
+
+. estimates store lev_model
+
+. 
+. estadd scalar Wald_chi2 = 4.47
+
+added scalar:
+          e(Wald_chi2) =  4.47
+
+. estadd scalar AR2_p = 0.340
+
+added scalar:
+              e(AR2_p) =  .34
+
+. estadd scalar Hansen_J = 5.39
+
+added scalar:
+           e(Hansen_J) =  5.39
+
+. 
+. 
+. *--- GMM: ΔCFV ---
+. xtabond2 D_cfv L1_D_ip L1_D_lev_book L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_ip L1_D_lev_book L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     36559
+Time variable : fyear                           Number of groups   =      4750
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 4749)    =     12.13                                      avg =      7.70
+Prob > F      =     0.000                                      max =        22
+-----------------------------------------------------------------------------------
+                  |              Corrected
+            D_cfv | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+          L1_D_ip |  -.0044912   .0107422    -0.42   0.676    -.0255509    .0165685
+    L1_D_lev_book |  -.0718219    .077199    -0.93   0.352    -.2231676    .0795239
+          L1_D_nh |  -.0191471   .0148723    -1.29   0.198    -.0483037    .0100095
+        L1_D_prof |  -.0081841    .026945    -0.30   0.761    -.0610089    .0446406
+        L1_D_lnat |  -.0040196   .0075354    -0.53   0.594    -.0187925    .0107533
+           L1_D_q |  -.0002146   .0004281    -0.50   0.616     -.001054    .0006248
+L1_D_collateral_r |  -.0301675   .0271524    -1.11   0.267    -.0833989    .0230639
+         L1_D_hhi |    .007072   .0186507     0.38   0.705     -.029492    .0436361
+            _cons |  -.0028185   .0013218    -2.13   0.033    -.0054098   -.0002273
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_ip L1_D_lev_book L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_ip L1_D_lev_book L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z =  -5.81  Pr > z =  0.000
+Arellano-Bond test for AR(2) in first differences: z =  -1.12  Pr > z =  0.264
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  31.74  Prob > chi2 =  0.000
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   1.79  Prob > chi2 =  0.938
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   1.59  Prob > chi2 =  0.663
+    Difference (null H = exogenous): chi2(3)    =   0.21  Prob > chi2 =  0.977
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.58  Prob > chi2 =  0.445
+    Difference (null H = exogenous): chi2(5)    =   1.21  Prob > chi2 =  0.944
+
+
+. estimates store cfv_model
+
+. 
+. estadd scalar Wald_chi2 = 12.13
+
+added scalar:
+          e(Wald_chi2) =  12.13
+
+. estadd scalar AR2_p = 0.264
+
+added scalar:
+              e(AR2_p) =  .264
+
+. estadd scalar Hansen_J = 1.79
+
+added scalar:
+           e(Hansen_J) =  1.79
+
+. 
+. 
+. *--- GMM: ΔIntangible Portfolio ---
+. xtabond2 D_ip L1_D_lev_book L1_D_cfv L1_D_nh ///
+>     L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi, ///
+>     gmm(L1_D_lev_book L1_D_cfv L1_D_nh, lag(2 3) collapse) ///
+>     iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi) ///
+>     twostep robust small
+Favoring space over speed. To switch, type or click on mata: mata set matafavor speed, perm.
+
+Dynamic panel-data estimation, two-step system GMM
+------------------------------------------------------------------------------
+Group variable: gvkey                           Number of obs      =     36559
+Time variable : fyear                           Number of groups   =      4750
+Number of instruments = 15                      Obs per group: min =         1
+F(8, 4749)    =      5.45                                      avg =      7.70
+Prob > F      =     0.000                                      max =        22
+-----------------------------------------------------------------------------------
+                  |              Corrected
+             D_ip | Coefficient  std. err.      t    P>|t|     [95% conf. interval]
+------------------+----------------------------------------------------------------
+    L1_D_lev_book |  -.0361863   .3168851    -0.11   0.909    -.6574281    .5850555
+         L1_D_cfv |  -.6558359   .7994415    -0.82   0.412    -2.223112    .9114402
+          L1_D_nh |   -.026907    .148723    -0.18   0.856    -.3184729     .264659
+        L1_D_prof |   .0004578   .1447334     0.00   0.997    -.2832869    .2842024
+        L1_D_lnat |  -.0893339   .0212115    -4.21   0.000    -.1309182   -.0477496
+           L1_D_q |   .0021855   .0026051     0.84   0.402    -.0029217    .0072926
+L1_D_collateral_r |  -.0677535   .0483052    -1.40   0.161    -.1624541     .026947
+         L1_D_hhi |  -.1211336   .0755529    -1.60   0.109    -.2692524    .0269852
+            _cons |  -.0023011   .0041896    -0.55   0.583    -.0105146    .0059125
+-----------------------------------------------------------------------------------
+Instruments for first differences equation
+  Standard
+    D.(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    L(2/3).(L1_D_lev_book L1_D_cfv L1_D_nh) collapsed
+Instruments for levels equation
+  Standard
+    L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi
+    _cons
+  GMM-type (missing=0, separate instruments for each period unless collapsed)
+    DL.(L1_D_lev_book L1_D_cfv L1_D_nh) collapsed
+------------------------------------------------------------------------------
+Arellano-Bond test for AR(1) in first differences: z = -18.66  Pr > z =  0.000
+Arellano-Bond test for AR(2) in first differences: z =   2.99  Pr > z =  0.003
+------------------------------------------------------------------------------
+Sargan test of overid. restrictions: chi2(6)    =  11.10  Prob > chi2 =  0.085
+  (Not robust, but not weakened by many instruments.)
+Hansen test of overid. restrictions: chi2(6)    =   2.69  Prob > chi2 =  0.846
+  (Robust, but weakened by many instruments.)
+
+Difference-in-Hansen tests of exogeneity of instrument subsets:
+  GMM instruments for levels
+    Hansen test excluding group:     chi2(3)    =   0.86  Prob > chi2 =  0.835
+    Difference (null H = exogenous): chi2(3)    =   1.83  Prob > chi2 =  0.608
+  iv(L1_D_prof L1_D_lnat L1_D_q L1_D_collateral_r L1_D_hhi)
+    Hansen test excluding group:     chi2(1)    =   0.31  Prob > chi2 =  0.577
+    Difference (null H = exogenous): chi2(5)    =   2.38  Prob > chi2 =  0.794
+
+
+. estimates store ip_model
+
+. 
+. estadd scalar Wald_chi2 = 5.45
+
+added scalar:
+          e(Wald_chi2) =  5.45
+
+. estadd scalar AR2_p = 0.003
+
+added scalar:
+              e(AR2_p) =  .003
+
+. estadd scalar Hansen_J = 2.69
+
+added scalar:
+           e(Hansen_J) =  2.69
+
+. 
+. 
+. *--- Export GMM results WITH post-estimation tests ---
+. cd "../Output"
+/Users/leisz1/Desktop/Dissertation/Regression/Output
+
+. 
+. esttab lev_model cfv_model ip_model using "tab_main_gmm_results_full.tex", ///
+>     se label b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+>     scalars("Wald_chi2 Wald χ²/F-test" ///
+>             "Hansen_J Hansen J-statistic (χ², df = 6)" ///
+>             "AR2_p AR(2) p-value") ///
+>     title("System GMM Results: Leverage, Risk, and Intangible Positioning") ///
+>     booktabs replace
+(output written to tab_main_gmm_results_full.tex)
+
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+. 
+end of do-file
+
+. 
+. di as txt ">> Output and regression completed."
+>> Output and regression completed.
+
+. 
+. 
+. 
+. *-----------------------------*
+. * 5. Close Log
+. *-----------------------------*
+. log close
+      name:  <unnamed>
+       log:  /Users/leisz1/Desktop/Dissertation/Regression/Do_file/Logs/main_log.smcl
+  log type:  smcl
+ closed on:  10 Sep 2025, 08:42:23
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+. log close mainlog_txt
+      name:  mainlog_txt
+       log:  /Users/leisz1/Desktop/Dissertation/Regression/Do_file/Logs/main_log.txt
+  log type:  text
+ closed on:  10 Sep 2025, 08:42:23
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
