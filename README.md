@@ -1,6 +1,7 @@
 ## Financial Distress Risk and Intangible Asset Portfolio
 
 **University of Warwick – MSc Economics and International Financial Economics Dissertation (2025)**
+
 **Author:** Lei Sze Wing Sharon
 
 ### Overview
