@@ -1,8 +1,8 @@
 ## Financial Distress Risk and Intangible Asset Portfolio
 
-**University of Warwick – MSc Economics and International Financial Economics Dissertation (2025)**
+**University of Warwick – MSc Economics and International Financial Economics Dissertation (2025)**  
 
-**Author:** Lei Sze Wing Sharon
+**Author:** Lei Sze Wing Sharon 
 
 ### Overview
 
@@ -20,7 +20,7 @@ The empirical analysis uses **panel data of 4,600+ North American firms (2000–
 Data preparation and estimation were implemented using **Stata 18**, integrating advanced econometric and data-cleaning techniques:
 
 * **Data Cleaning & Transformation:**
-* 
+  
   * Harmonization of panel identifiers and industry codes (SIC2, SIC3).
   * Multi-stage imputation strategy: within-firm interpolation, industry–year medians, and firm-level means.
   * Winsorization of key accounting ratios to mitigate outlier influence.
